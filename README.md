@@ -63,7 +63,11 @@ docker build -t system-monitor .
 
 2. Run the container:
 ```bash
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock system-monitor
+docker run --rm -it \
+  --pid=host \
+  --network=host \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  system-monitor
 ```
 
 ## Development
