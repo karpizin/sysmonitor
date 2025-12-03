@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  sysmonitor:
+    build: .
+    image: sysmonitor
+    container_name: sysmonitor
+    # Host mode networking is required to monitor host network interfaces
+    network_mode: host
+    # Host PID mode is required to monitor host processes via psutil
+    pid: host
+    # Interactive mode flags (equivalent to -it)
+    stdin_open: true
+    tty: true
+    volumes:
+      # Required to access Docker socket
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
