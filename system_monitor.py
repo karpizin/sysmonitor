@@ -6,6 +6,7 @@ import socket
 import threading
 from datetime import datetime
 from collections import deque
+import platform
 
 class SystemMonitor:
     def __init__(self, history_length=60):
@@ -192,6 +193,26 @@ class SystemMonitor:
             pass
         return sorted(used_ports)
     
+    def get_system_info(self):
+        boot_time_timestamp = psutil.boot_time()
+        boot_datetime = datetime.fromtimestamp(boot_time_timestamp)
+        now_datetime = datetime.now()
+        uptime_delta = now_datetime - boot_datetime
+        
+        days = uptime_delta.days
+        hours, remainder = divmod(uptime_delta.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        
+        uptime_str = f"{days}d {hours}h {minutes}m"
+        
+        return {
+            'os': platform.system(),
+            'release': platform.release(),
+            'version': platform.version(),
+            'machine': platform.machine(),
+            'uptime': uptime_str
+        }
+    
     def create_bar(self, percent, width=30):
         filled = int(width * percent / 100)
         bar = '█' * filled + '░' * (width - filled)
@@ -236,10 +257,18 @@ class SystemMonitor:
         docker_space_str = self.docker_state['space_str']
         port_map = self.docker_state['port_map'] # Get the port map
         
+        system_info = self.get_system_info() # Get system info
+        
         lines = []
         lines.append(f"\n{ '=' * 70}")
         lines.append(f"System Monitor - {datetime.now().strftime('%H:%M:%S')}")
         lines.append(f"{ '=' * 70}\n")
+        
+        # System Info Section
+        lines.append(f"SYSTEM INFO:")
+        lines.append(f"OS: {system_info['os']} {system_info['release']} ({system_info['version']})")
+        lines.append(f"Architecture: {system_info['machine']}")
+        lines.append(f"Uptime: {system_info['uptime']}\n")
         
         # CPU
         lines.append(f"CPU Usage:")
