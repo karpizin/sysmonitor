@@ -16,6 +16,10 @@ class SystemMonitor:
         self.disk_usage_history = deque(maxlen=history_length)
         self.docker_containers_history = deque(maxlen=history_length)
         
+        # Caching for heavy operations
+        self.last_docker_space_check = 0
+        self.cached_docker_space = 0
+        
     def get_cpu_usage(self):
         cpu_percent = psutil.cpu_percent(interval=None)
         self.cpu_history.append(cpu_percent)
@@ -36,6 +40,11 @@ class SystemMonitor:
         }
     
     def get_docker_space(self):
+        # Cache this heavy operation (docker df takes time)
+        current_time = time.time()
+        if current_time - self.last_docker_space_check < 60 and self.last_docker_space_check != 0:
+            return self.cached_docker_space
+
         try:
             info = self.docker_client.df()
             total_space = sum(image['Size'] for image in info['Images'])
@@ -43,6 +52,9 @@ class SystemMonitor:
             containers_space = sum(container['SizeRw'] for container in info['Containers'] if container.get('SizeRw'))
             
             total_used = (total_space + volumes_space + containers_space) / (1024**3)  # Convert to GB
+            
+            self.cached_docker_space = total_used
+            self.last_docker_space_check = current_time
             return total_used
         except Exception as e:
             return f"Docker space error: {str(e)}"
@@ -62,9 +74,13 @@ class SystemMonitor:
     
     def get_used_ports(self):
         used_ports = []
-        for conn in psutil.net_connections(kind='inet'):
-            if conn.status == 'LISTEN':
-                used_ports.append(f"{conn.laddr.ip}:{conn.laddr.port}")
+        try:
+            # Use net_connections with handling for potential permission issues or timeouts
+            for conn in psutil.net_connections(kind='inet'):
+                if conn.status == 'LISTEN':
+                    used_ports.append(f"{conn.laddr.ip}:{conn.laddr.port}")
+        except Exception:
+            pass
         return sorted(used_ports)
     
     def create_bar(self, percent, width=30):
@@ -85,67 +101,87 @@ class SystemMonitor:
             normalized = [int(7 * (x - min_val) / (max_val - min_val)) for x in data]
         
         # Characters for different graph levels
-        spark_chars = "▁▂▃▄▅▆▇█"
+        spark_chars = " ▂▃▄▅▆▇█"
         
         # Create graph
         graph = ''.join(spark_chars[n] for n in normalized[-width:])
         return graph
     
     def display_metrics(self):
-        os.system('clear' if os.name == 'posix' else 'cls')
+        # 1. Gather all data FIRST (prevents flickering and blank screens during calculation)
+        cpu_percent = self.get_cpu_usage()
+        mem_percent = self.get_memory_usage()
+        disk_info = self.get_disk_space()
+        docker_space = self.get_docker_space()
+        containers = self.get_docker_containers()
+        ports = self.get_used_ports()
         
-        print(f"\n{'=' * 60}")
-        print(f"System Monitor - {datetime.now().strftime('%H:%M:%S')}")
-        print(f"{'=' * 60}\n")
+        # 2. Prepare the output buffer
+        lines = []
+        
+        lines.append(f"\n{'=' * 60}")
+        lines.append(f"System Monitor - {datetime.now().strftime('%H:%M:%S')}")
+        lines.append(f"{'=' * 60}\n")
         
         # CPU
-        cpu_percent = self.get_cpu_usage()
-        print(f"CPU Usage:")
-        print(f"{self.create_bar(cpu_percent)}")
-        print(f"Last minute trend:")
-        print(f"{self.create_sparkline(self.cpu_history)}\n")
+        lines.append(f"CPU Usage:")
+        lines.append(f"{self.create_bar(cpu_percent)}")
+        lines.append(f"Last minute trend:")
+        lines.append(f"{self.create_sparkline(self.cpu_history)}\n")
         
         # Memory
-        mem_percent = self.get_memory_usage()
-        print(f"Memory:")
-        print(f"{self.create_bar(mem_percent)}")
-        print(f"Last minute trend:")
-        print(f"{self.create_sparkline(self.memory_history)}\n")
+        lines.append(f"Memory:")
+        lines.append(f"{self.create_bar(mem_percent)}")
+        lines.append(f"Last minute trend:")
+        lines.append(f"{self.create_sparkline(self.memory_history)}\n")
         
         # Disk
-        disk_info = self.get_disk_space()
-        print(f"Disk:")
-        print(f"Free: {disk_info['free']:.1f}GB of {disk_info['total']:.1f}GB")
-        print(f"{self.create_bar(disk_info['percent'])}")
-        print(f"Usage trend:")
-        print(f"{self.create_sparkline(self.disk_usage_history)}\n")
+        lines.append(f"Disk:")
+        lines.append(f"Free: {disk_info['free']:.1f}GB of {disk_info['total']:.1f}GB")
+        lines.append(f"{self.create_bar(disk_info['percent'])}")
+        lines.append(f"Usage trend:")
+        lines.append(f"{self.create_sparkline(self.disk_usage_history)}\n")
         
         # Docker space
-        docker_space = self.get_docker_space()
-        print(f"Docker Storage:")
+        lines.append(f"Docker Storage (Cached, updates every 60s):")
         if isinstance(docker_space, float):
-            print(f"Used: {docker_space:.1f}GB\n")
+            lines.append(f"Used: {docker_space:.1f}GB\n")
         else:
-            print(f"{docker_space}\n")
+            lines.append(f"{docker_space}\n")
         
         # Docker containers
-        containers = self.get_docker_containers()
-        print(f"Docker Containers ({containers['count']}):")
-        print(f"Container count trend:")
-        print(f"{self.create_sparkline(self.docker_containers_history)}")
-        for name in containers['names']:
-            print(f"- {name}")
-        print()
+        lines.append(f"Docker Containers ({containers['count']}):")
+        lines.append(f"Container count trend:")
+        lines.append(f"{self.create_sparkline(self.docker_containers_history)}")
+        
+        max_display = 5
+        for i, name in enumerate(containers['names']):
+            if i >= max_display:
+                lines.append(f"... and {len(containers['names']) - max_display} more")
+                break
+            lines.append(f"- {name}")
+        lines.append("")
         
         # Network ports
-        ports = self.get_used_ports()
-        print(f"Used Network Ports ({len(ports)}):")
-        for port in ports:
-            print(f"- {port}")
+        lines.append(f"Used Network Ports ({len(ports)}):")
+        max_ports = 10
+        for i, port in enumerate(ports):
+            if i >= max_ports:
+                lines.append(f"... and {len(ports) - max_ports} more")
+                break
+            lines.append(f"- {port}")
+            
+        # 3. Clear screen and print everything at once
+        os.system('clear' if os.name == 'posix' else 'cls')
+        print('\n'.join(lines))
 
 def main():
     monitor = SystemMonitor()
     try:
+        # Initial clear
+        os.system('clear' if os.name == 'posix' else 'cls')
+        print("Starting System Monitor...")
+        
         while True:
             monitor.display_metrics()
             time.sleep(2)
