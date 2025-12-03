@@ -177,15 +177,28 @@ class SystemMonitor:
         bar = '█' * filled + '░' * (width - filled)
         return f'[{bar}] {percent:.1f}%'
     
-    def create_sparkline(self, data, width=30):
+    def create_sparkline(self, data, width=30, max_value=100):
         if not data:
             return "░" * width
-        min_val = min(data)
-        max_val = max(data)
-        if min_val == max_val:
-            normalized = [4 for _ in data]
+        
+        normalized = []
+        if max_value is not None:
+            # Absolute scaling (0 to max_value)
+            # Clamp values between 0 and max_value
+            for x in data:
+                val = max(0, min(x, max_value))
+                # Scale 0..max_value -> 0..7
+                norm = int(7 * val / max_value)
+                normalized.append(norm)
         else:
-            normalized = [int(7 * (x - min_val) / (max_val - min_val)) for x in data]
+            # Relative scaling (min to max of data)
+            min_val = min(data)
+            max_val = max(data)
+            if min_val == max_val:
+                normalized = [4 for _ in data] # Middle line
+            else:
+                normalized = [int(7 * (x - min_val) / (max_val - min_val)) for x in data]
+        
         spark_chars = " ▂▃▄▅▆▇█"
         graph = ''.join(spark_chars[n] for n in normalized[-width:])
         return graph
@@ -230,7 +243,8 @@ class SystemMonitor:
         else:
             lines.append(f"Active Containers: {docker_count}")
             if len(self.docker_containers_history) > 0:
-                 lines.append(f"Trend: {self.create_sparkline(self.docker_containers_history, 40)}")
+                 # Use relative scaling (max_value=None) for container count
+                 lines.append(f"Trend: {self.create_sparkline(self.docker_containers_history, 40, max_value=None)}")
             lines.append("")
             
             # Table
