@@ -149,9 +149,23 @@ class SystemMonitor:
         return cpu_percent
     
     def get_memory_usage(self):
-        memory = psutil.virtual_memory()
-        self.memory_history.append(memory.percent)
-        return memory.percent
+        virtual_mem = psutil.virtual_memory()
+        swap_mem = psutil.swap_memory()
+        
+        self.memory_history.append(virtual_mem.percent) # History still based on virtual mem percent
+        
+        return {
+            'virtual': {
+                'total': virtual_mem.total / (1024**3),  # GB
+                'available': virtual_mem.available / (1024**3), # GB
+                'percent': virtual_mem.percent
+            },
+            'swap': {
+                'total': swap_mem.total / (1024**3),    # GB
+                'used': swap_mem.used / (1024**3),      # GB
+                'percent': swap_mem.percent
+            }
+        }
     
     def get_disk_space(self):
         disk = psutil.disk_usage('/')
@@ -225,8 +239,16 @@ class SystemMonitor:
         lines.append(f"{self.create_bar(cpu_percent)}  Trend: {self.create_sparkline(self.cpu_history, 20)}")
         
         # Memory
+        mem_info = self.get_memory_usage() # Now returns dict
         lines.append(f"Memory:")
-        lines.append(f"{self.create_bar(mem_percent)}  Trend: {self.create_sparkline(self.memory_history, 20)}\n")
+        lines.append(f"Free: {mem_info['virtual']['available']:.1f}GB / {mem_info['virtual']['total']:.1f}GB")
+        lines.append(f"{self.create_bar(mem_info['virtual']['percent'])}  Trend: {self.create_sparkline(self.memory_history, 20)}\n") # Using virtual percent for bar and history
+
+        # Swap Memory (New section)
+        if mem_info['swap']['total'] > 0: # Only show if swap exists
+            lines.append(f"Swap:")
+            lines.append(f"Used: {mem_info['swap']['used']:.1f}GB / {mem_info['swap']['total']:.1f}GB")
+            lines.append(f"{self.create_bar(mem_info['swap']['percent'])}\n")
         
         # Disk
         lines.append(f"Disk Usage:")
