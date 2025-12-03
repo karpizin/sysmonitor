@@ -23,7 +23,8 @@ class SystemMonitor:
             'container_count': 0,
             'space_str': "Initializing...",
             'containers_ready': False,
-            'space_ready': False
+            'space_ready': False,
+            'port_map': {} # Map port -> container name
         }
         
         self.stop_threads = False
@@ -51,6 +52,8 @@ class SystemMonitor:
                 count = len(containers)
                 
                 data_list = []
+                port_map = {}
+
                 for c in containers:
                     # Basic Info
                     try:
@@ -65,13 +68,15 @@ class SystemMonitor:
                             if p:
                                 for mapping in p:
                                     if 'HostPort' in mapping:
-                                        ports_list.append(mapping['HostPort'])
+                                        host_port = mapping['HostPort']
+                                        ports_list.append(host_port)
+                                        # Map this port to container name for later lookup
+                                        port_map[host_port] = c.name
+
                         ports_str = ",".join(ports_list[:3])
                         if len(ports_list) > 3: ports_str += "..."
                         
                         # Stats (Snapshot)
-                        # stats(stream=False) is slower but manageable for few containers.
-                        # If too slow, we might strictly rely on precached values, but let's try this first.
                         stats = c.stats(stream=False)
                         
                         # CPU Calc
@@ -105,6 +110,7 @@ class SystemMonitor:
                 # Update State
                 self.docker_state['containers'] = data_list
                 self.docker_state['container_count'] = count
+                self.docker_state['port_map'] = port_map
                 self.docker_state['containers_ready'] = True
                 
                 # Update History for Sparkline
@@ -220,14 +226,15 @@ class SystemMonitor:
     def display_metrics(self):
         # Gather data
         cpu_percent = self.get_cpu_usage()
-        mem_percent = self.get_memory_usage()
+        mem_info = self.get_memory_usage()
         disk_info = self.get_disk_space()
-        ports = self.get_used_ports()
+        raw_ports = self.get_used_ports()
         
         # Read from async state
         docker_count = self.docker_state['container_count']
         docker_containers = self.docker_state['containers']
         docker_space_str = self.docker_state['space_str']
+        port_map = self.docker_state['port_map'] # Get the port map
         
         lines = []
         lines.append(f"\n{ '=' * 70}")
@@ -239,13 +246,12 @@ class SystemMonitor:
         lines.append(f"{self.create_bar(cpu_percent)}  Trend: {self.create_sparkline(self.cpu_history, 20)}")
         
         # Memory
-        mem_info = self.get_memory_usage() # Now returns dict
         lines.append(f"Memory:")
         lines.append(f"Free: {mem_info['virtual']['available']:.1f}GB / {mem_info['virtual']['total']:.1f}GB")
-        lines.append(f"{self.create_bar(mem_info['virtual']['percent'])}  Trend: {self.create_sparkline(self.memory_history, 20)}\n") # Using virtual percent for bar and history
+        lines.append(f"{self.create_bar(mem_info['virtual']['percent'])}  Trend: {self.create_sparkline(self.memory_history, 20)}\n") 
 
-        # Swap Memory (New section)
-        if mem_info['swap']['total'] > 0: # Only show if swap exists
+        # Swap Memory
+        if mem_info['swap']['total'] > 0:
             lines.append(f"Swap:")
             lines.append(f"Used: {mem_info['swap']['used']:.1f}GB / {mem_info['swap']['total']:.1f}GB")
             lines.append(f"{self.create_bar(mem_info['swap']['percent'])}\n")
@@ -292,10 +298,24 @@ class SystemMonitor:
 
         # Ports Section
         lines.append("-" * 70)
-        lines.append(f"Open Ports ({len(ports)}):")
-        port_str = ", ".join(ports[:12])
-        if len(ports) > 12:
-            port_str += f", ... and {len(ports)-12} more"
+        lines.append(f"Open Ports ({len(raw_ports)}):")
+        
+        # Format ports with service names
+        formatted_ports = []
+        for p_str in raw_ports:
+             # p_str is like "0.0.0.0:8080"
+             try:
+                 port_num = p_str.split(':')[-1]
+                 if port_num in port_map:
+                     formatted_ports.append(f"{p_str} ({port_map[port_num]})")
+                 else:
+                     formatted_ports.append(p_str)
+             except:
+                 formatted_ports.append(p_str)
+        
+        port_str = ", ".join(formatted_ports[:8]) # Show fewer ports as strings are longer now
+        if len(formatted_ports) > 8:
+            port_str += f", ... and {len(formatted_ports)-8} more"
         lines.append(port_str)
             
         # Render
