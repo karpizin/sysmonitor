@@ -40,6 +40,14 @@ class SystemMonitor:
         self.container_thread.start()
         self.space_thread.start()
 
+    def _format_bytes(self, b):
+        """Helper to format bytes to human readable string"""
+        for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
+            if b < 1024.0:
+                return f"{b:.1f}{unit}"
+            b /= 1024.0
+        return f"{b:.1f}PB"
+
     def _loop_containers(self):
         """Fast loop: Lists containers and grabs their stats."""
         try:
@@ -97,13 +105,24 @@ class SystemMonitor:
                         mem_limit = stats['memory_stats']['limit']
                         mem_mb = mem_usage / (1024 * 1024)
                         
+                        # Net I/O Calc
+                        rx_bytes = 0
+                        tx_bytes = 0
+                        if 'networks' in stats:
+                            for net_name, net_data in stats['networks'].items():
+                                rx_bytes += net_data.get('rx_bytes', 0)
+                                tx_bytes += net_data.get('tx_bytes', 0)
+                        
+                        net_io_str = f"{self._format_bytes(rx_bytes)} / {self._format_bytes(tx_bytes)}"
+
                         data_list.append({
                             'name': c.name,
                             'status': c.status,
                             'health': health,
                             'ports': ports_str,
                             'cpu': cpu_percent,
-                            'mem_mb': mem_mb
+                            'mem_mb': mem_mb,
+                            'net_io': net_io_str
                         })
                     except Exception:
                         continue
@@ -260,9 +279,9 @@ class SystemMonitor:
         system_info = self.get_system_info() # Get system info
         
         lines = []
-        lines.append(f"\n{ '=' * 70}")
+        lines.append(f"\n{ '=' * 85}") # Widened separator
         lines.append(f"System Monitor - {datetime.now().strftime('%H:%M:%S')}")
-        lines.append(f"{ '=' * 70}\n")
+        lines.append(f"{ '=' * 85}\n")
         
         # System Info Section
         lines.append(f"SYSTEM INFO:")
@@ -291,7 +310,7 @@ class SystemMonitor:
         lines.append(f"{self.create_bar(disk_info['percent'])}  Trend: {self.create_sparkline(self.disk_usage_history, 20)}\n")
         
         # Docker Section
-        lines.append("-" * 70)
+        lines.append("-" * 85)
         lines.append(f"DOCKER SYSTEM:")
         lines.append(f"Storage: {docker_space_str}")
         
@@ -306,16 +325,21 @@ class SystemMonitor:
             
             # Table
             if docker_containers:
-                lines.append(f"{ 'NAME':<20} {'STATUS':<10} {'HEALTH':<10} {'CPU%':<6} {'MEM':<10} {'PORTS'}")
-                lines.append("-" * 70)
+                # Updated Header with wider NAME and new NET I/O column
+                # NAME: 30 chars
+                # NET IO: 15 chars
+                lines.append(f"{ 'NAME':<30} {'STATUS':<10} {'HEALTH':<10} {'CPU%':<6} {'MEM':<10} {'NET I/O':<18} {'PORTS'}")
+                lines.append("-" * 85)
                 for c in docker_containers[:15]:
-                    name = (c['name'][:18] + '..') if len(c['name']) > 20 else c['name']
+                    # Wider truncation for name
+                    name = (c['name'][:28] + '..') if len(c['name']) > 30 else c['name']
                     lines.append(
-                        f"{name:<20} "
+                        f"{name:<30} "
                         f"{c['status']:<10} "
                         f"{c['health']:<10} "
                         f"{c['cpu']:>5.1f}% "
                         f"{c['mem_mb']:>6.1f}MB "
+                        f"{c['net_io']:<18} "
                         f"{c['ports']}"
                     )
                 if len(docker_containers) > 15:
@@ -326,13 +350,12 @@ class SystemMonitor:
         lines.append("")
 
         # Ports Section
-        lines.append("-" * 70)
+        lines.append("-" * 85)
         lines.append(f"Open Ports ({len(raw_ports)}):")
         
         # Format ports with service names
         formatted_ports = []
         for p_str in raw_ports:
-             # p_str is like "0.0.0.0:8080"
              try:
                  port_num = p_str.split(':')[-1]
                  if port_num in port_map:
@@ -342,7 +365,7 @@ class SystemMonitor:
              except:
                  formatted_ports.append(p_str)
         
-        port_str = ", ".join(formatted_ports[:8]) # Show fewer ports as strings are longer now
+        port_str = ", ".join(formatted_ports[:8]) 
         if len(formatted_ports) > 8:
             port_str += f", ... and {len(formatted_ports)-8} more"
         lines.append(port_str)
